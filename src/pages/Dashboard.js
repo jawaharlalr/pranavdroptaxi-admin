@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { db } from '../firebase';
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { db, requestNotificationPermission } from '../firebase'; // Import permission helper
+import { collection, onSnapshot, query, orderBy, limit, doc, setDoc } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext'; // Import Auth Context
 import { 
   FaCalendarCheck, FaClock, FaCheckCircle, FaRupeeSign, 
-  FaUsers, FaArrowUp, FaArrowDown, FaUser, FaCar 
+  FaUsers, FaArrowUp, FaArrowDown, FaUser, FaCar, FaMapMarkerAlt 
 } from 'react-icons/fa';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -15,11 +16,11 @@ import { Link } from 'react-router-dom';
 // --- Components ---
 
 const StatsCard = ({ title, value, icon, color, trend }) => (
-  <div className="relative flex flex-col p-6 overflow-hidden transition-colors duration-300 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray group hover:border-taxi-yellow">
+  <div className="relative flex flex-col p-6 overflow-hidden transition-all duration-300 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray group hover:border-taxi-yellow hover:-translate-y-1">
     <div className="z-10 flex items-center justify-between">
       <div>
         <p className="text-xs font-bold tracking-widest text-gray-500 uppercase">{title}</p>
-        <h3 className="mt-2 text-3xl font-bold text-white">{value}</h3>
+        <h3 className="mt-2 text-2xl font-bold text-white md:text-3xl">{value}</h3>
       </div>
       <div className={`p-3 rounded-xl bg-opacity-10 ${color.bg} ${color.text} shadow-[0_0_15px_rgba(0,0,0,0.5)]`}>
         {icon}
@@ -39,6 +40,8 @@ const StatsCard = ({ title, value, icon, color, trend }) => (
 );
 
 const Dashboard = () => {
+  const { currentUser } = useAuth(); // Get current logged-in admin
+  
   // State for raw data
   const [allBookings, setAllBookings] = useState([]);
   const [recentUsers, setRecentUsers] = useState([]);
@@ -65,7 +68,34 @@ const Dashboard = () => {
     return format(date, 'dd MMM yyyy');
   };
 
-  // 1. Fetch Real-time Data
+  // --- 1. SETUP NOTIFICATIONS (NEW) ---
+  useEffect(() => {
+    const setupNotifications = async () => {
+      if (currentUser) {
+        // Request permission and get token
+        const token = await requestNotificationPermission();
+        
+        // If we got a token, save it to Firestore under 'admin_tokens'
+        // This allows Cloud Functions to send messages to this specific device
+        if (token) {
+          try {
+            await setDoc(doc(db, "admin_tokens", currentUser.uid), {
+              token: token,
+              updatedAt: new Date(),
+              email: currentUser.email
+            }, { merge: true });
+            console.log("Notification token saved.");
+          } catch (error) {
+            console.error("Error saving notification token:", error);
+          }
+        }
+      }
+    };
+
+    setupNotifications();
+  }, [currentUser]);
+
+  // --- 2. Fetch Real-time Data ---
   useEffect(() => {
     const qBookings = query(collection(db, "bookings"), orderBy("createdAt", "desc"));
     const unsubscribeBookings = onSnapshot(qBookings, (snapshot) => {
@@ -96,7 +126,7 @@ const Dashboard = () => {
     return () => { unsubscribeBookings(); unsubscribeUsers(); };
   }, []);
 
-  // 2. Process Data when Bookings or Filters change
+  // --- 3. Process Data when Bookings or Filters change ---
   useEffect(() => {
     if (allBookings.length === 0) return;
 
@@ -185,29 +215,29 @@ const Dashboard = () => {
     <div className="pb-8 space-y-6">
       <div className="flex items-end justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-white">Dashboard</h2>
-          <p className="mt-1 text-gray-400">Overview of your taxi dispatch operations.</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white md:text-3xl">Dashboard</h2>
+          <p className="mt-1 text-sm text-gray-400 md:text-base">Overview of your taxi dispatch operations.</p>
         </div>
       </div>
       
       {/* 1. Stats Grid */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <StatsCard title="Total Bookings" value={stats.total} icon={<FaCalendarCheck size={24}/>} color={{ bg: 'bg-blue-600', text: 'text-blue-500' }} trend={12} />
-        <StatsCard title="Confirmed" value={stats.confirmed} icon={<FaCheckCircle size={24}/>} color={{ bg: 'bg-indigo-500', text: 'text-indigo-500' }} trend={5} />
-        <StatsCard title="Pending" value={stats.pending} icon={<FaClock size={24}/>} color={{ bg: 'bg-yellow-500', text: 'text-yellow-500' }} trend={-2} />
-        <StatsCard title="Revenue" value={`₹${(stats.revenue || 0).toLocaleString()}`} icon={<FaRupeeSign size={24}/>} color={{ bg: 'bg-taxi-yellow', text: 'text-taxi-yellow' }} trend={15} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 md:gap-6">
+        <StatsCard title="Total Bookings" value={stats.total} icon={<FaCalendarCheck size={20}/>} color={{ bg: 'bg-blue-600', text: 'text-blue-500' }} trend={12} />
+        <StatsCard title="Confirmed" value={stats.confirmed} icon={<FaCheckCircle size={20}/>} color={{ bg: 'bg-indigo-500', text: 'text-indigo-500' }} trend={5} />
+        <StatsCard title="Pending" value={stats.pending} icon={<FaClock size={20}/>} color={{ bg: 'bg-yellow-500', text: 'text-yellow-500' }} trend={-2} />
+        <StatsCard title="Revenue" value={`₹${(stats.revenue || 0).toLocaleString()}`} icon={<FaRupeeSign size={20}/>} color={{ bg: 'bg-taxi-yellow', text: 'text-taxi-yellow' }} trend={15} />
       </div>
 
       {/* 2. REVENUE CHARTS SECTION */}
       <div className="grid grid-cols-1 gap-6">
         
         {/* CHART 1: MONTHLY BREAKDOWN */}
-        <div className="p-6 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray">
+        <div className="p-4 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray md:p-6">
           <div className="flex flex-col justify-between mb-6 md:flex-row md:items-center">
             <h3 className="flex items-center text-sm font-bold tracking-wider text-white uppercase">
               <FaRupeeSign className="mr-2 text-taxi-yellow"/> Daily Financial Overview
             </h3>
-            <div className="flex gap-2 mt-2 md:mt-0">
+            <div className="flex gap-2 mt-4 md:mt-0">
                <select 
                  value={monthlyViewMonth} 
                  onChange={(e) => setMonthlyViewMonth(e.target.value)}
@@ -224,7 +254,7 @@ const Dashboard = () => {
                </select>
             </div>
           </div>
-          <div className="w-full h-80">
+          <div className="w-full h-64 md:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={monthlyChartData}>
                 <defs>
@@ -254,12 +284,12 @@ const Dashboard = () => {
         </div>
 
         {/* CHART 2: YEARLY BREAKDOWN */}
-        <div className="p-6 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray">
+        <div className="p-4 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray md:p-6">
           <div className="flex flex-col justify-between mb-6 md:flex-row md:items-center">
             <h3 className="flex items-center text-sm font-bold tracking-wider text-white uppercase">
               <FaRupeeSign className="mr-2 text-blue-400"/> Monthly Financial Overview
             </h3>
-            <div className="mt-2 md:mt-0">
+            <div className="mt-4 md:mt-0">
                <select 
                  value={yearlyViewYear} 
                  onChange={(e) => setYearlyViewYear(e.target.value)}
@@ -269,7 +299,7 @@ const Dashboard = () => {
                </select>
             </div>
           </div>
-          <div className="w-full h-80">
+          <div className="w-full h-64 md:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={yearlyChartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
@@ -293,7 +323,7 @@ const Dashboard = () => {
       {/* 3. Secondary Metrics (Cars & Pie) */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Vehicle Stats */}
-        <div className="p-6 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray">
+        <div className="p-4 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray md:p-6">
           <h3 className="flex items-center mb-6 text-sm font-bold tracking-wider text-white uppercase">
             <FaCar className="mr-2 text-indigo-400"/> Cars Booked (All Time)
           </h3>
@@ -311,7 +341,7 @@ const Dashboard = () => {
         </div>
 
         {/* Booking Status Pie */}
-        <div className="flex flex-col p-6 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray">
+        <div className="flex flex-col p-4 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray md:p-6">
           <h3 className="mb-2 text-sm font-bold tracking-wider text-white uppercase">Status Overview</h3>
           <div className="flex-1 min-h-[200px] relative">
             <ResponsiveContainer width="100%" height="100%">
@@ -346,49 +376,47 @@ const Dashboard = () => {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Recent Bookings Table */}
         <div className="overflow-hidden border shadow-lg lg:col-span-2 bg-taxi-dark rounded-xl border-taxi-gray">
-          <div className="flex items-center justify-between p-6 border-b border-taxi-gray">
-            <h3 className="text-xl font-bold text-white">Recent Bookings</h3>
+          <div className="flex items-center justify-between p-4 border-b border-taxi-gray md:p-6">
+            <h3 className="text-lg font-bold text-white md:text-xl">Recent Bookings</h3>
             <Link to="/bookings" className="text-sm text-taxi-yellow hover:underline">View All</Link>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="text-xs text-gray-400 uppercase bg-black/50">
                 <tr>
-                  <th className="px-6 py-4 font-semibold tracking-wider">S.No</th>
-                  <th className="px-6 py-4 font-semibold tracking-wider">Customer</th>
-                  <th className="px-6 py-4 font-semibold tracking-wider">Route</th>
-                  {/* Added Date Column Header */}
-                  <th className="px-6 py-4 font-semibold tracking-wider">Date</th>
-                  <th className="px-6 py-4 font-semibold tracking-wider">Status</th>
-                  <th className="px-6 py-4 font-semibold tracking-wider text-right">Price</th>
+                  <th className="px-4 py-3 font-semibold tracking-wider md:px-6 md:py-4">S.No</th>
+                  <th className="px-4 py-3 font-semibold tracking-wider md:px-6 md:py-4">Customer</th>
+                  <th className="px-4 py-3 font-semibold tracking-wider md:px-6 md:py-4">Route</th>
+                  <th className="px-4 py-3 font-semibold tracking-wider md:px-6 md:py-4">Date</th>
+                  <th className="px-4 py-3 font-semibold tracking-wider md:px-6 md:py-4">Status</th>
+                  <th className="px-4 py-3 font-semibold tracking-wider text-right md:px-6 md:py-4">Price</th>
                 </tr>
               </thead>
               <tbody className="text-gray-300 divide-y divide-taxi-gray/50">
                 {recentBookings.map((booking, index) => (
                   <tr key={booking.id} className="transition-colors hover:bg-white/5 group">
-                    <td className="px-6 py-4 font-mono text-xs text-gray-500">
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500 md:px-6 md:py-4">
                       {(index + 1).toString().padStart(2, '0')}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3 md:px-6 md:py-4">
                       <div className="font-medium text-white">{booking.name || booking.userName || 'Guest'}</div>
                       <a href={`tel:${booking.phone?.replace(/\D/g, '')}`} className="text-xs text-gray-500 transition-colors hover:text-taxi-yellow">
                         {booking.phone}
                       </a>
                     </td>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="flex items-center"><span className="w-2 h-2 mr-2 bg-green-500 rounded-full"></span> {booking.source?.displayName || booking.pickupLocation || 'N/A'}</div>
-                      <div className="h-3 my-1 ml-1 border-l border-gray-600 border-dashed"></div>
-                      <div className="flex items-center"><span className="w-2 h-2 mr-2 bg-red-500 rounded-full"></span> {booking.destination?.displayName || booking.dropLocation || 'N/A'}</div>
+                    <td className="px-4 py-3 text-sm md:px-6 md:py-4">
+                      <div className="flex items-center text-xs md:text-sm"><FaMapMarkerAlt className="w-3 h-3 mr-2 text-green-500"/> {booking.source?.displayName || 'N/A'}</div>
+                      <div className="h-3 my-1 ml-1.5 border-l border-gray-600 border-dashed"></div>
+                      <div className="flex items-center text-xs md:text-sm"><FaMapMarkerAlt className="w-3 h-3 mr-2 text-red-500"/> {booking.destination?.displayName || 'N/A'}</div>
                     </td>
                     
-                    {/* Added Date Column Data */}
-                    <td className="px-6 py-4 text-xs">
-                        <div className="text-white"><span className="text-gray-500">Trip:</span> {formatSafeDate(booking.date)}</div>
-                        <div className="mt-1 text-gray-500"><span className="text-gray-600">Booked:</span> {formatSafeDate(booking.createdAt)}</div>
+                    <td className="px-4 py-3 text-xs md:px-6 md:py-4">
+                        <div className="text-white whitespace-nowrap">{formatSafeDate(booking.date)}</div>
+                        <div className="mt-1 text-gray-500 whitespace-nowrap text-[10px]">Booked: {formatSafeDate(booking.createdAt)}</div>
                     </td>
 
-                    <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider
+                    <td className="px-4 py-3 md:px-6 md:py-4">
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap
                         ${booking.status === 'completed' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
                           booking.status === 'confirmed' ? 'bg-blue-500/10 text-blue-500 border border-blue-500/20' :
                           (booking.status === 'pending' || booking.status === 'yet to confirm') ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' :
@@ -398,7 +426,7 @@ const Dashboard = () => {
                         {booking.status || 'Pending'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 font-mono font-bold text-right text-taxi-yellow">
+                    <td className="px-4 py-3 font-mono font-bold text-right text-taxi-yellow md:px-6 md:py-4">
                       ₹{(booking.finalPrice || 0).toLocaleString()}
                     </td>
                   </tr>
@@ -412,7 +440,7 @@ const Dashboard = () => {
         </div>
 
         {/* New Users Widget */}
-        <div className="p-6 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray">
+        <div className="p-4 border shadow-lg bg-taxi-dark rounded-xl border-taxi-gray md:p-6">
           <h3 className="flex items-center justify-between mb-4 text-lg font-bold text-white">
             <span>New Users</span>
             <span className="px-2 py-1 text-xs font-normal text-gray-400 rounded bg-white/5">Recently Joined</span>
@@ -432,15 +460,15 @@ const Dashboard = () => {
             <h4 className="mb-2 text-xs font-bold tracking-wider text-gray-500 uppercase">Latest Users</h4>
             {recentUsers.map((user, i) => (
               <div key={user.id || i} className="flex items-center justify-between p-2 transition-colors rounded cursor-pointer group hover:bg-white/5">
-                <div className="flex items-center">
-                  <div className="flex items-center justify-center w-8 h-8 overflow-hidden text-xs font-bold text-white bg-gray-700 border border-gray-600 rounded-full">
+                <div className="flex items-center w-full">
+                  <div className="flex items-center justify-center flex-shrink-0 w-8 h-8 overflow-hidden text-xs font-bold text-white bg-gray-700 border border-gray-600 rounded-full">
                     {user.photoURL ? <img src={user.photoURL} alt="user" className="object-cover w-full h-full"/> : <FaUser />}
                   </div>
-                  <div className="ml-3">
-                    <p className="text-sm font-medium text-white transition-colors group-hover:text-blue-400">
+                  <div className="min-w-0 ml-3">
+                    <p className="text-sm font-medium text-white truncate transition-colors group-hover:text-blue-400">
                       {user.name || user.email || 'Anonymous'}
                     </p>
-                    <p className="w-32 text-xs text-gray-500 truncate">{user.email}</p>
+                    <p className="text-xs text-gray-500 truncate">{user.email}</p>
                   </div>
                 </div>
               </div>
