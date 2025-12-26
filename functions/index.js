@@ -19,21 +19,23 @@ exports.sendNewBookingNotification = functions.firestore
 
     if (booking.returnDate) {
       const rd = booking.returnDate.toDate ? booking.returnDate.toDate() : new Date(booking.returnDate);
-      dateInfo += ` to ${rd.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`;
+      dateInfo += ` - ${rd.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`;
     }
 
     const tokensSnapshot = await admin.firestore().collection("admin_tokens").get();
 
     if (tokensSnapshot.empty) return null;
 
-    const tokens = tokensSnapshot.docs
+    const rawTokens = tokensSnapshot.docs
       .map((doc) => doc.data().token)
       .filter((token) => token);
 
-    if (tokens.length === 0) return null;
+    const uniqueTokens = [...new Set(rawTokens)];
+
+    if (uniqueTokens.length === 0) return null;
 
     const message = {
-      tokens: tokens,
+      tokens: uniqueTokens,
       notification: {
         title: "🚖 New Booking Received!",
         body: `${customerName} • ${dateInfo}\n${source} ➝ ${dest}`,
@@ -51,12 +53,12 @@ exports.sendNewBookingNotification = functions.firestore
 
     try {
       const response = await admin.messaging().sendEachForMulticast(message);
-      
+
       if (response.failureCount > 0) {
         const failedTokens = [];
         response.responses.forEach((resp, idx) => {
           if (!resp.success && resp.error.code === 'messaging/registration-token-not-registered') {
-            failedTokens.push(tokens[idx]);
+            failedTokens.push(uniqueTokens[idx]);
           }
         });
 
